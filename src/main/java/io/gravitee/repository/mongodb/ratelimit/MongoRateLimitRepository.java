@@ -15,22 +15,24 @@
  */
 package io.gravitee.repository.mongodb.ratelimit;
 
-import com.mongodb.BasicDBObjectBuilder;
-import com.mongodb.DBObject;
+import io.gravitee.repository.mongodb.ratelimit.model.MongoRateLimit;
 import io.gravitee.repository.ratelimit.api.RateLimitRepository;
 import io.gravitee.repository.ratelimit.model.RateLimit;
+import io.reactivex.Single;
 import org.bson.Document;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.data.mongodb.core.MongoOperations;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.ReactiveMongoOperations;
 import org.springframework.data.mongodb.core.index.IndexDefinition;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Component;
+import reactor.adapter.rxjava.RxJava2Adapter;
 
 import javax.annotation.PostConstruct;
-import java.util.Date;
-import java.util.Iterator;
+import java.util.function.Supplier;
 
 /**
  * @author David BRASSELY (david.brassely at graviteesource.com)
@@ -39,9 +41,14 @@ import java.util.Iterator;
 @Component
 public class MongoRateLimitRepository implements RateLimitRepository {
 
+    /*
+    @Autowired
+    ReactiveMongoOperations operations;
+    */
+
     @Autowired
     @Qualifier("rateLimitMongoTemplate")
-    private MongoOperations mongoOperations;
+    private ReactiveMongoOperations mongoOperations;
 
     private final static String RATE_LIMIT_COLLECTION = "ratelimit";
 
@@ -52,6 +59,11 @@ public class MongoRateLimitRepository implements RateLimitRepository {
     private final static String FIELD_UPDATED_AT = "updated_at";
     private final static String FIELD_CREATED_AT = "created_at";
     private final static String FIELD_ASYNC = "async";
+
+    private final Update INC_AND_GET_UPDATE = new Update().inc(FIELD_COUNTER, 1);
+    private final Query INC_AND_GET_QUERY = new Query(Criteria.where(FIELD_KEY).is("key"));
+    private final FindAndModifyOptions INC_AND_GET_OPTIONS = new FindAndModifyOptions().returnNew(true).upsert(false);
+
 
     @PostConstruct
     public void ensureTTLIndex() {
@@ -69,6 +81,20 @@ public class MongoRateLimitRepository implements RateLimitRepository {
         });
     }
 
+    @Override
+    public Single<RateLimit> incrementAndGet(String key, Supplier<RateLimit> supplier) {
+        return RxJava2Adapter.monoToSingle(
+                mongoOperations
+                        .findAndModify(
+                                INC_AND_GET_QUERY,
+                                INC_AND_GET_UPDATE,
+                                INC_AND_GET_OPTIONS,
+                                MongoRateLimit.class)
+                        .switchIfEmpty(mongoOperations.insert(new MongoRateLimit(supplier.get())))
+                        .map(this::convert));
+    }
+
+    /*
     @Override
     public RateLimit get(String rateLimitKey) {
         //because RateLimit has no default constructor, we have to manually map values
@@ -100,19 +126,17 @@ public class MongoRateLimitRepository implements RateLimitRepository {
                 .map(this::convert)
                 .iterator();
     }
+    */
 
-    private RateLimit convert(Document document) {
-        if (document == null) {
+    private RateLimit convert(MongoRateLimit mongoRateLimit) {
+        if (mongoRateLimit == null) {
             return null;
         }
 
-        RateLimit rateLimit = new RateLimit(document.getString((FIELD_KEY)));
-        rateLimit.setCounter((long) document.get(FIELD_COUNTER));
-        rateLimit.setLastRequest((long) document.get(FIELD_LAST_REQUEST));
-        rateLimit.setResetTime(((Date) document.get(FIELD_RESET_TIME)).getTime());
-        rateLimit.setUpdatedAt((long) document.get(FIELD_UPDATED_AT));
-        rateLimit.setCreatedAt((long) document.get(FIELD_CREATED_AT));
-        rateLimit.setAsync((boolean) document.get(FIELD_ASYNC));
+        RateLimit rateLimit = new RateLimit(mongoRateLimit.getId());
+        rateLimit.setCounter(mongoRateLimit.getCounter());
+        rateLimit.setResetTime(mongoRateLimit.getResetTime().getTime());
+        rateLimit.setAsync(mongoRateLimit.isAsync());
 
         return rateLimit;
     }
