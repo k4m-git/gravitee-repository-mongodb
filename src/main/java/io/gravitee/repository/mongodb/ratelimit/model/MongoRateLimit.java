@@ -18,8 +18,10 @@ package io.gravitee.repository.mongodb.ratelimit.model;
 import io.gravitee.repository.ratelimit.model.RateLimit;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.mapping.Field;
 
 import java.util.Date;
+import java.util.Objects;
 
 /**
  * @author David BRASSELY (david.brassely at graviteesource.com)
@@ -31,6 +33,7 @@ public class MongoRateLimit {
     @Id
     private String id;
 
+    @Field("reset_time")
     private Date resetTime;
 
     private long counter;
@@ -39,12 +42,15 @@ public class MongoRateLimit {
 
     private boolean async;
 
+    private String subscription;
+
     public MongoRateLimit(final RateLimit rateLimit) {
         this.id = rateLimit.getKey();
         this.resetTime = new Date(rateLimit.getResetTime());
+        this.limit = rateLimit.getLimit();
         this.counter = rateLimit.getCounter();
         this.async = rateLimit.isAsync();
-        this.limit = -1;
+        this.subscription = rateLimit.getSubscription();
     }
 
     public MongoRateLimit() {
@@ -89,5 +95,26 @@ public class MongoRateLimit {
 
     public void setAsync(boolean async) {
         this.async = async;
+    }
+
+    public String getSubscription() {
+        return subscription;
+    }
+
+    public void setSubscription(String subscription) {
+        this.subscription = subscription;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        MongoRateLimit that = (MongoRateLimit) o;
+        return id.equals(that.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id);
     }
 }

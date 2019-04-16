@@ -15,9 +15,9 @@
  */
 package io.gravitee.repository.mongodb.ratelimit;
 
-import io.gravitee.repository.mongodb.ratelimit.model.MongoRateLimit;
 import io.gravitee.repository.ratelimit.api.RateLimitRepository;
 import io.gravitee.repository.ratelimit.model.RateLimit;
+import io.reactivex.Maybe;
 import io.reactivex.Single;
 import org.bson.Document;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,6 +32,7 @@ import org.springframework.stereotype.Component;
 import reactor.adapter.rxjava.RxJava2Adapter;
 
 import javax.annotation.PostConstruct;
+import java.util.Date;
 import java.util.function.Supplier;
 
 /**
@@ -40,11 +41,6 @@ import java.util.function.Supplier;
  */
 @Component
 public class MongoRateLimitRepository implements RateLimitRepository {
-
-    /*
-    @Autowired
-    ReactiveMongoOperations operations;
-    */
 
     @Autowired
     @Qualifier("rateLimitMongoTemplate")
@@ -55,14 +51,11 @@ public class MongoRateLimitRepository implements RateLimitRepository {
     private final static String FIELD_KEY = "_id";
     private final static String FIELD_COUNTER = "counter";
     private final static String FIELD_RESET_TIME = "reset_time";
-    private final static String FIELD_LAST_REQUEST = "last_request";
-    private final static String FIELD_UPDATED_AT = "updated_at";
-    private final static String FIELD_CREATED_AT = "created_at";
+    private final static String FIELD_LIMIT = "last_request";
+    private final static String FIELD_SUBSCRIPTION = "updated_at";
     private final static String FIELD_ASYNC = "async";
 
-    private final Update INC_AND_GET_UPDATE = new Update().inc(FIELD_COUNTER, 1);
-    private final Query INC_AND_GET_QUERY = new Query(Criteria.where(FIELD_KEY).is("key"));
-    private final FindAndModifyOptions INC_AND_GET_OPTIONS = new FindAndModifyOptions().returnNew(true).upsert(false);
+    private final FindAndModifyOptions INC_AND_GET_OPTIONS = new FindAndModifyOptions().returnNew(true).upsert(true);
 
 
     @PostConstruct
@@ -82,15 +75,29 @@ public class MongoRateLimitRepository implements RateLimitRepository {
     }
 
     @Override
-    public Single<RateLimit> incrementAndGet(String key, Supplier<RateLimit> supplier) {
+    public Single<RateLimit> incrementAndGet(String key, long weight, Supplier<RateLimit> supplier) {
+        RateLimit limit = supplier.get();
         return RxJava2Adapter.monoToSingle(
                 mongoOperations
                         .findAndModify(
-                                INC_AND_GET_QUERY,
-                                INC_AND_GET_UPDATE,
+                                new Query(Criteria.where(FIELD_KEY).is(key)),
+                                new Update()
+                                        .inc(FIELD_COUNTER, weight)
+                                        .setOnInsert(FIELD_RESET_TIME, new Date(limit.getResetTime()))
+                                        .setOnInsert(FIELD_LIMIT, limit.getLimit())
+                                        .setOnInsert(FIELD_ASYNC, limit.isAsync())
+                                        .setOnInsert(FIELD_SUBSCRIPTION,limit.getSubscription()),
                                 INC_AND_GET_OPTIONS,
-                                MongoRateLimit.class)
-                        .switchIfEmpty(mongoOperations.insert(new MongoRateLimit(supplier.get())))
+                                Document.class,
+                                RATE_LIMIT_COLLECTION)
+                        .map(this::convert));
+    }
+
+    @Override
+    public Maybe<RateLimit> get(String key) {
+        return RxJava2Adapter.monoToMaybe(
+                mongoOperations
+                        .findById(key, Document.class, RATE_LIMIT_COLLECTION)
                         .map(this::convert));
     }
 
@@ -128,15 +135,17 @@ public class MongoRateLimitRepository implements RateLimitRepository {
     }
     */
 
-    private RateLimit convert(MongoRateLimit mongoRateLimit) {
-        if (mongoRateLimit == null) {
+    private RateLimit convert(Document document) {
+        if (document == null) {
             return null;
         }
 
-        RateLimit rateLimit = new RateLimit(mongoRateLimit.getId());
-        rateLimit.setCounter(mongoRateLimit.getCounter());
-        rateLimit.setResetTime(mongoRateLimit.getResetTime().getTime());
-        rateLimit.setAsync(mongoRateLimit.isAsync());
+        RateLimit rateLimit = new RateLimit(document.getString(FIELD_KEY));
+        rateLimit.setCounter(document.getLong(FIELD_COUNTER));
+        rateLimit.setLimit(document.getLong(FIELD_LIMIT));
+        rateLimit.setResetTime(document.getDate(FIELD_RESET_TIME).getTime());
+        rateLimit.setSubscription(document.getString(FIELD_SUBSCRIPTION));
+        rateLimit.setAsync(document.getBoolean(FIELD_ASYNC));
 
         return rateLimit;
     }
