@@ -21,6 +21,7 @@ import io.gravitee.repository.ratelimit.api.RateLimitRepository;
 import io.gravitee.repository.ratelimit.model.RateLimit;
 import io.reactivex.Maybe;
 import io.reactivex.Single;
+import io.reactivex.schedulers.Schedulers;
 import org.bson.Document;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -32,9 +33,11 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Component;
 import reactor.adapter.rxjava.RxJava2Adapter;
+import reactor.core.publisher.Mono;
 
 import javax.annotation.PostConstruct;
 import java.util.Date;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -78,19 +81,28 @@ public class MongoRateLimitRepository implements RateLimitRepository<RateLimit> 
     @Override
     public Single<RateLimit> incrementAndGet(String key, long weight, Supplier<RateLimit> supplier) {
         RateLimit limit = supplier.get();
-        return RxJava2Adapter.monoToSingle(
-                mongoOperations
-                        .findAndModify(
-                                new Query(Criteria.where(FIELD_KEY).is(key)),
-                                new Update()
-                                        .inc(FIELD_COUNTER, weight)
-                                        .setOnInsert(FIELD_RESET_TIME, new Date(limit.getResetTime()))
-                                        .setOnInsert(FIELD_LIMIT, limit.getLimit())
-                                        .setOnInsert(FIELD_SUBSCRIPTION,limit.getSubscription()),
-                                INC_AND_GET_OPTIONS,
-                                Document.class,
-                                RATE_LIMIT_COLLECTION)
-                        .map(this::convert));
+        return RxJava2Adapter
+                .monoToSingle(
+                        Mono
+                                .just(supplier.get())
+                                .flatMap(new Function<RateLimit, Mono<Document>>() {
+                                    @Override
+                                    public Mono<Document> apply(RateLimit rateLimit) {
+                                        return mongoOperations
+                                                .findAndModify(
+                                                        new Query(Criteria.where(FIELD_KEY).is(key)),
+                                                        new Update()
+                                                                .inc(FIELD_COUNTER, weight)
+                                                                .setOnInsert(FIELD_RESET_TIME, new Date(limit.getResetTime()))
+                                                                .setOnInsert(FIELD_LIMIT, limit.getLimit())
+                                                                .setOnInsert(FIELD_SUBSCRIPTION,limit.getSubscription()),
+                                                        INC_AND_GET_OPTIONS,
+                                                        Document.class,
+                                                        RATE_LIMIT_COLLECTION);
+                                    }
+                                })
+                                .map(this::convert))
+                .subscribeOn(Schedulers.io());
     }
 
     @Override
