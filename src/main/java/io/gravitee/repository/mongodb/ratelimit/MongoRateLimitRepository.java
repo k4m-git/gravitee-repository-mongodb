@@ -53,9 +53,8 @@ public class MongoRateLimitRepository implements RateLimitRepository<RateLimit> 
     private final static String FIELD_KEY = "_id";
     private final static String FIELD_COUNTER = "counter";
     private final static String FIELD_RESET_TIME = "reset_time";
-    private final static String FIELD_LIMIT = "last_request";
-    private final static String FIELD_SUBSCRIPTION = "updated_at";
-    private final static String FIELD_ASYNC = "async";
+    private final static String FIELD_LIMIT = "limit";
+    private final static String FIELD_SUBSCRIPTION = "subscription";
 
     private final FindAndModifyOptions INC_AND_GET_OPTIONS = new FindAndModifyOptions().returnNew(true).upsert(true);
 
@@ -87,7 +86,6 @@ public class MongoRateLimitRepository implements RateLimitRepository<RateLimit> 
                                         .inc(FIELD_COUNTER, weight)
                                         .setOnInsert(FIELD_RESET_TIME, new Date(limit.getResetTime()))
                                         .setOnInsert(FIELD_LIMIT, limit.getLimit())
-                                        .setOnInsert(FIELD_ASYNC, limit.isAsync())
                                         .setOnInsert(FIELD_SUBSCRIPTION,limit.getSubscription()),
                                 INC_AND_GET_OPTIONS,
                                 Document.class,
@@ -103,21 +101,11 @@ public class MongoRateLimitRepository implements RateLimitRepository<RateLimit> 
                         .map(this::convert));
     }
 
-    /*
-    @Override
-    public RateLimit get(String rateLimitKey) {
-        //because RateLimit has no default constructor, we have to manually map values
-        Document result = mongoOperations.findById(rateLimitKey, Document.class, RATE_LIMIT_COLLECTION);
-        RateLimit rateLimit = convert(result);
-        return rateLimit == null ? new RateLimit(rateLimitKey) : rateLimit;
-    }*/
-
     @Override
     public Single<RateLimit> save(RateLimit rateLimit) {
         final DBObject doc = BasicDBObjectBuilder.start()
                 .add(FIELD_KEY, rateLimit.getKey())
                 .add(FIELD_COUNTER, rateLimit.getCounter())
-                .add(FIELD_ASYNC, rateLimit.isAsync())
                 .add(FIELD_RESET_TIME, new Date(rateLimit.getResetTime()))
                 .add(FIELD_LIMIT, rateLimit.getLimit())
                 .add(FIELD_SUBSCRIPTION, rateLimit.getSubscription())
@@ -130,17 +118,6 @@ public class MongoRateLimitRepository implements RateLimitRepository<RateLimit> 
         );
     }
 
-    /*
-    @Override
-    public Iterator<RateLimit> findAsyncAfter(long timestamp) {
-        final Query query = Query.query(Criteria.where(FIELD_ASYNC).is(true).and(FIELD_UPDATED_AT).gte(timestamp));
-        return mongoOperations.find(query, Document.class, RATE_LIMIT_COLLECTION)
-                .stream()
-                .map(this::convert)
-                .iterator();
-    }
-    */
-
     private RateLimit convert(Document document) {
         if (document == null) {
             return null;
@@ -151,7 +128,6 @@ public class MongoRateLimitRepository implements RateLimitRepository<RateLimit> 
         rateLimit.setLimit(document.getLong(FIELD_LIMIT));
         rateLimit.setResetTime(document.getDate(FIELD_RESET_TIME).getTime());
         rateLimit.setSubscription(document.getString(FIELD_SUBSCRIPTION));
-        rateLimit.setAsync(document.getBoolean(FIELD_ASYNC));
 
         return rateLimit;
     }
@@ -166,7 +142,6 @@ public class MongoRateLimitRepository implements RateLimitRepository<RateLimit> 
         rateLimit.setLimit((Long)document.get(FIELD_LIMIT));
         rateLimit.setResetTime(((Date)document.get(FIELD_RESET_TIME)).getTime());
         rateLimit.setSubscription((String)document.get(FIELD_SUBSCRIPTION));
-        rateLimit.setAsync((Boolean) document.get(FIELD_ASYNC));
 
         return rateLimit;
     }
