@@ -15,6 +15,8 @@
  */
 package io.gravitee.repository.mongodb.ratelimit;
 
+import com.mongodb.BasicDBObjectBuilder;
+import com.mongodb.DBObject;
 import io.gravitee.repository.ratelimit.api.RateLimitRepository;
 import io.gravitee.repository.ratelimit.model.RateLimit;
 import io.reactivex.Maybe;
@@ -40,7 +42,7 @@ import java.util.function.Supplier;
  * @author GraviteeSource Team
  */
 @Component
-public class MongoRateLimitRepository implements RateLimitRepository {
+public class MongoRateLimitRepository implements RateLimitRepository<RateLimit> {
 
     @Autowired
     @Qualifier("rateLimitMongoTemplate")
@@ -108,23 +110,27 @@ public class MongoRateLimitRepository implements RateLimitRepository {
         Document result = mongoOperations.findById(rateLimitKey, Document.class, RATE_LIMIT_COLLECTION);
         RateLimit rateLimit = convert(result);
         return rateLimit == null ? new RateLimit(rateLimitKey) : rateLimit;
-    }
+    }*/
 
     @Override
-    public void save(RateLimit rateLimit) {
+    public Single<RateLimit> save(RateLimit rateLimit) {
         final DBObject doc = BasicDBObjectBuilder.start()
                 .add(FIELD_KEY, rateLimit.getKey())
                 .add(FIELD_COUNTER, rateLimit.getCounter())
-                .add(FIELD_LAST_REQUEST, rateLimit.getLastRequest())
-                .add(FIELD_RESET_TIME, new Date(rateLimit.getResetTime()))
-                .add(FIELD_UPDATED_AT, rateLimit.getUpdatedAt())
-                .add(FIELD_CREATED_AT, rateLimit.getCreatedAt())
                 .add(FIELD_ASYNC, rateLimit.isAsync())
+                .add(FIELD_RESET_TIME, new Date(rateLimit.getResetTime()))
+                .add(FIELD_LIMIT, rateLimit.getLimit())
+                .add(FIELD_SUBSCRIPTION, rateLimit.getSubscription())
                 .get();
 
-        mongoOperations.save(doc, RATE_LIMIT_COLLECTION);
+        return RxJava2Adapter.monoToSingle(
+                mongoOperations
+                    .save(doc, RATE_LIMIT_COLLECTION)
+                    .map(this::convert)
+        );
     }
 
+    /*
     @Override
     public Iterator<RateLimit> findAsyncAfter(long timestamp) {
         final Query query = Query.query(Criteria.where(FIELD_ASYNC).is(true).and(FIELD_UPDATED_AT).gte(timestamp));
@@ -146,6 +152,21 @@ public class MongoRateLimitRepository implements RateLimitRepository {
         rateLimit.setResetTime(document.getDate(FIELD_RESET_TIME).getTime());
         rateLimit.setSubscription(document.getString(FIELD_SUBSCRIPTION));
         rateLimit.setAsync(document.getBoolean(FIELD_ASYNC));
+
+        return rateLimit;
+    }
+
+    private RateLimit convert(DBObject document) {
+        if (document == null) {
+            return null;
+        }
+
+        RateLimit rateLimit = new RateLimit((String)document.get(FIELD_KEY));
+        rateLimit.setCounter((Long)document.get(FIELD_COUNTER));
+        rateLimit.setLimit((Long)document.get(FIELD_LIMIT));
+        rateLimit.setResetTime(((Date)document.get(FIELD_RESET_TIME)).getTime());
+        rateLimit.setSubscription((String)document.get(FIELD_SUBSCRIPTION));
+        rateLimit.setAsync((Boolean) document.get(FIELD_ASYNC));
 
         return rateLimit;
     }
