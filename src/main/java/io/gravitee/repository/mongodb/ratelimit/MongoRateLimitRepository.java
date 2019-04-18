@@ -21,13 +21,13 @@ import io.gravitee.repository.ratelimit.api.RateLimitRepository;
 import io.gravitee.repository.ratelimit.model.RateLimit;
 import io.reactivex.Maybe;
 import io.reactivex.Single;
-import io.reactivex.schedulers.Schedulers;
 import org.bson.Document;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.ReactiveMongoOperations;
-import org.springframework.data.mongodb.core.index.IndexDefinition;
+import org.springframework.data.mongodb.core.index.Index;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
@@ -64,23 +64,14 @@ public class MongoRateLimitRepository implements RateLimitRepository<RateLimit> 
 
     @PostConstruct
     public void ensureTTLIndex() {
-        mongoOperations.indexOps(RATE_LIMIT_COLLECTION).ensureIndex(new IndexDefinition() {
-            @Override
-            public Document getIndexKeys() {
-                return new Document(FIELD_RESET_TIME, 1L);
-            }
-
-            @Override
-            public Document getIndexOptions() {
-                // To expire Documents at a Specific Clock Time we have to specify an expireAfterSeconds value of 0.
-                return new Document("expireAfterSeconds", 0L);
-            }
-        });
+        mongoOperations.indexOps(RATE_LIMIT_COLLECTION).ensureIndex(
+                new Index(FIELD_RESET_TIME, Sort.Direction.ASC).expire(0L))
+                .subscribe();
     }
 
     @Override
     public Single<RateLimit> incrementAndGet(String key, long weight, Supplier<RateLimit> supplier) {
-        RateLimit limit = supplier.get();
+        final Date now = new Date();
         return RxJava2Adapter
                 .monoToSingle(
                         Mono
@@ -93,16 +84,29 @@ public class MongoRateLimitRepository implements RateLimitRepository<RateLimit> 
                                                         new Query(Criteria.where(FIELD_KEY).is(key)),
                                                         new Update()
                                                                 .inc(FIELD_COUNTER, weight)
-                                                                .setOnInsert(FIELD_RESET_TIME, new Date(limit.getResetTime()))
-                                                                .setOnInsert(FIELD_LIMIT, limit.getLimit())
-                                                                .setOnInsert(FIELD_SUBSCRIPTION,limit.getSubscription()),
+                                                                .setOnInsert(FIELD_RESET_TIME, new Date(rateLimit.getResetTime()))
+                                                                .setOnInsert(FIELD_LIMIT, rateLimit.getLimit())
+                                                                .setOnInsert(FIELD_SUBSCRIPTION,rateLimit.getSubscription()),
                                                         INC_AND_GET_OPTIONS,
                                                         Document.class,
                                                         RATE_LIMIT_COLLECTION);
                                     }
+                                }).flatMap(new Function<Document, Mono<Document>>() {
+                                    @Override
+                                    public Mono<Document> apply(Document document) {
+                                        if (document.getDate(FIELD_RESET_TIME).before(now)) {
+                                            return mongoOperations.findAndRemove(
+                                                    new Query(Criteria.where(FIELD_KEY).is(key)),
+                                                    Document.class,
+                                                    RATE_LIMIT_COLLECTION);
+                                        } else {
+                                            return Mono.just(document);
+                                        }
+                                    }
                                 })
-                                .map(this::convert))
-                .subscribeOn(Schedulers.io());
+                                .map(this::convert));
+//                        })
+
     }
 
     @Override
